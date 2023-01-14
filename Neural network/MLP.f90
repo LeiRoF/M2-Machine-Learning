@@ -4,6 +4,8 @@ program MLP
 
     ! Declaration of variables -----------------------------------------------
 
+    logical :: discret_outputs = .true. ! if false, confusion matrix will not be computed
+
     integer :: layers  ! number of layers
     integer :: X_size  ! size of input vectors
     integer :: T_size  ! size of output vectors
@@ -23,6 +25,11 @@ program MLP
     integer, allocatable :: n_weights(:)         ! number of weights in each layer
     real,    allocatable :: weights(:,:,:)       ! weights of the network
     character(len=1024)  :: file                 ! file to read from
+    real,    allocatable :: confusion(:,:)       ! confusion matrix
+    real,    allocatable :: possible_outputs(:,:)! possible outputs
+    integer              :: nb_possible_outputs  ! number of possible outputs
+    integer              :: output_category      ! category of the output
+    integer              :: expected_category    ! category of the expected output
 
     ! Initialization ---------------------------------------------------------
 
@@ -64,6 +71,22 @@ program MLP
     ! Read the input and output vectors from the file
     call load_data(file, X, T, N, X_size, T_size) ! X, T, N <- file
     call normalize_data(X, T, N, X_size, T_size, X_norm, T_norm)
+    call get_possible_outputs(T, T_size, N, possible_outputs, nb_possible_outputs)
+    
+    print *, "Possible outputs:"
+    do i=1, nb_possible_outputs
+        print *, T_norm * possible_outputs(i,:)
+    end do
+    print *, "Number of possible outputs:", nb_possible_outputs
+
+    if (discret_outputs) then
+        ! Confusion matrix:
+        ! - Columns: predicted outputs that are coherent | garbage | precision
+        ! - Rows:    expected outputs | recall
+        ! - Last row and column: accuracy
+        allocate(confusion(nb_possible_outputs, nb_possible_outputs+1))
+        confusion = 0
+    end if
 
     ! Ask the user for the number of epochs
     epochs = get_epochs()
@@ -77,6 +100,8 @@ program MLP
         print *, " "
         print *, "=================================================="
         print *, "Epoch ", e, "/", epochs
+        print *, "=================================================="
+        print *, " "
 
         ! Shuffle the dataset
         call shuffle(X, T)
@@ -102,6 +127,18 @@ program MLP
 
             prediction = Y(layers, 1:T_size)
 
+            ! Compute the coordinates of the the prediction in the confusion matrix
+            if (discret_outputs) then
+                call get_output_category(&
+                    prediction, possible_outputs, nb_possible_outputs, output_category)
+                call get_output_category(&
+                    T(i,:), possible_outputs, nb_possible_outputs, expected_category)
+
+                ! Update the confusion matrix
+                confusion(expected_category, output_category) = &
+                    confusion(expected_category, output_category) + 1
+            end if
+
             ! Backward pass ---------------------------------------------------
 
             ! Computing the error of the last layer
@@ -119,9 +156,13 @@ program MLP
                 end do
             end do
 
+            print *, "Preditction:"
+            print *, X_norm * X(i,:), "|", T_norm * T(i,:), " -> ", T_norm * prediction
+
+            call print_confusion_matrix(confusion, nb_possible_outputs)
+            
             call print_weights(weights, neurons, n_weights)
 
-            print *, X_norm * X(i,:), "|", T_norm * T(i,:), " -> ", T_norm * prediction
         end do
     end do
 
@@ -313,12 +354,97 @@ program MLP
             integer, intent(in) :: neurons(:), n_weights(:)
             integer             :: i, j
 
+            print *, "Weights:"
             do i = 1, size(neurons)
-                write(*,*) "Layer ", i
+                write(*,*) "   Layer ", i
                 do j = 1, neurons(i)
-                    write(*,*) "    Neuron ", j, ":", weights(i, j, 1:n_weights(i))
+                    write(*,*) "      Neuron ", j, ":", weights(i, j, 1:n_weights(i))
                 end do
             end do
         end subroutine print_weights
+
+        ! Get the possible output values --------------------------------------
+        subroutine get_possible_outputs(T, T_size, N, possible_outputs, nb_possible_outputs)
+            implicit none
+            real,    intent(in   )              :: T(:,:)
+            integer, intent(in   )              :: T_size, N
+            real,    intent(  out), allocatable :: possible_outputs(:,:)
+            integer, intent(  out)              :: nb_possible_outputs
+            real,    dimension(N,T_size)        :: tmp_possible_outputs
+            integer                             :: i, j, k, nb
+            logical                             :: found
+
+            ! Find the possible outputs
+            nb = 0
+            do i = 1, N
+                do j = 1, T_size
+                    ! Check if all the elements of T(i, :) are in tmp_possible_outputs
+                    found = .false.
+                    do k = 1, nb
+                        if (all(T(i, :) == tmp_possible_outputs(k, :))) then
+                            found = .true.
+                            goto 42
+                        end if
+                    end do
+                    42 if (.not. found) then
+                        nb = nb + 1
+                        tmp_possible_outputs(nb, :) = T(i, :)
+                    end if
+                end do
+            end do
+
+            allocate(possible_outputs(nb, T_size))
+            possible_outputs = tmp_possible_outputs(1:nb, :)
+            nb_possible_outputs = nb
+        end subroutine get_possible_outputs
+
+        ! Print confusion matrix ----------------------------------------------
+        subroutine print_confusion_matrix(confusion_matrix, nb_possible_outputs)
+            implicit none
+            real,    intent(in) :: confusion_matrix(:,:)
+            integer, intent(in) :: nb_possible_outputs
+            integer, dimension(nb_possible_outputs) :: outputs
+            real,    dimension(nb_possible_outputs) :: recall
+            integer             :: trace = 0
+            integer             :: i
+
+            recall = 0.0
+
+            do i=1,nb_possible_outputs
+                outputs(i) = i
+                recall(i) = confusion_matrix(i,i) / sum(confusion_matrix(:, i))
+                trace = trace + int(confusion_matrix(i,i))
+            end do
+
+            print *, "Confusion matrix:"
+            print *, "               ", outputs, "      garbage       precision"
+            print *, "              --------------------------------------------------- "
+            do i = 1, nb_possible_outputs
+                print *, outputs(i), " | ", int(confusion_matrix(i, :)), " | ",     &
+                    int(confusion_matrix(i,i) / sum(confusion_matrix(i, :)) * 100), "%"
+            end do
+            print *, "              --------------------------------------------------- "
+            print *, "               ", int(recall*100), "%              ",&
+                int(real(trace) / sum(confusion_matrix) * 100.0), "%"
+
+        end subroutine print_confusion_matrix
+
+        ! Get the output category ---------------------------------------------
+        subroutine get_output_category(output, possible_outputs, nb_possible_outputs, category)
+            implicit none
+            real,    intent(in   ) :: output(:)
+            real,    intent(in   ) :: possible_outputs(:,:)
+            integer, intent(in   ) :: nb_possible_outputs
+            integer                :: i, category
+
+            do i = 1, nb_possible_outputs
+                if (all(output == possible_outputs(i, :))) then
+                    category = i
+                    goto 42
+                end if
+            end do
+            category = nb_possible_outputs + 1
+            42 category = category
+        end subroutine get_output_category
 
 end program MLP
