@@ -8,12 +8,13 @@ program MLP
     integer :: X_size  ! size of input vectors
     integer :: T_size  ! size of output vectors
     integer :: N       ! number of vectors in the dataset
-    integer :: e, i, j, l!, k ! loop variables
+    integer :: e, i, j, l, k ! loop variables
     integer :: epochs  ! number of epochs
 
     real,    allocatable :: X(:,:), T(:,:)       ! dataset vectors
     real,    allocatable :: Y(:,:)               ! output vectors of each layer
     real,    allocatable :: error(:,:,:)         ! error vectors of each neuron
+    real,    allocatable :: delta(:)             ! delta vector
     real,    allocatable :: prediction(:)        ! output of the network
     real                 :: output               ! output of a neuron
     real,    allocatable :: X_norm(:), T_norm(:) ! normalization factors
@@ -26,41 +27,42 @@ program MLP
     ! Initialization ---------------------------------------------------------
 
     ! Get the number of layers
-    layers = get_layers()                ! get the number of layers
+    layers = get_layers() ! get the number of layers
 
     ! Get the number of neurons in each layer
-    allocate(neurons(layers))            ! allocate the neurons array
-    call get_neurons(neurons)            ! get the number of neurons in each layer
+    allocate(neurons(layers)) ! allocate the neurons array
+    call get_neurons(neurons) ! get the number of neurons in each layer
 
     ! Get the size of input and output vectors
-    X_size = get_input_size()            ! get the size of input vector
-    T_size = neurons(layers)             ! get the size of output vector
-    allocate(X_norm(X_size))             ! allocate the normalization factors for the input vectors
-    allocate(T_norm(T_size))             ! allocate the normalization factors for the output vectors
+    X_size = get_input_size()  ! get the size of input vector
+    T_size = neurons(layers)   ! get the size of output vector
+    allocate(X_norm(X_size+1)) ! allocate the normalization factors for the input vectors
+    allocate(T_norm(T_size))   ! allocate the normalization factors for the output vectors
 
     ! Allocate the arrays
-    allocate(Y(layers, maxval(neurons))) ! allocate the output vector of each layer
-    allocate(prediction(T_size))          ! allocate the output of the network
-    allocate(n_weights(layers))          ! allocate the n_weights array
+    allocate(Y(layers, maxval(neurons)+1)) ! allocate the output vector of each layer
+    allocate(prediction(T_size))           ! allocate the output of the network
+    allocate(n_weights(layers))            ! allocate the n_weights array
 
     ! Define the number of weights for a neuron in each layer
-    n_weights(1) = X_size                ! compute the number of weights for the neurons in the first layer
-    do i = 2, size(neurons) + 1
-        n_weights(i) = neurons(i-1)      ! compute the number of weights for the neurons in the other layers
+    n_weights(1) = X_size+1           ! compute the number of weights for the neurons in the first layer
+    do l = 2, layers
+        n_weights(l) = neurons(l-1)+1 ! compute the number of weights for the neurons in the other layers
     end do
+    allocate(delta(maxval(neurons)))
 
     ! Get the file to read data from
     call get_file(file)
 
     ! Allocate the weights and error arrays (layer, neuron, weight)
-    allocate(weights(layers, maxval(neurons), max(maxval(neurons), X_size)))
-    allocate(error(layers, maxval(neurons), max(maxval(neurons), X_size)))
+    allocate(weights(layers, maxval(neurons), max(maxval(neurons)+1, X_size+1)))
+    allocate(error(layers, maxval(neurons), max(maxval(neurons)+1, X_size+1)))
 
     ! Initialize the weights array
     call random_number(weights)
 
     ! Read the input and output vectors from the file
-    call read_data(file, X, T, N, X_size, T_size) ! X, T, N <- file
+    call load_data(file, X, T, N, X_size, T_size) ! X, T, N <- file
     call normalize_data(X, T, N, X_size, T_size, X_norm, T_norm)
 
     ! Ask the user for the number of epochs
@@ -72,6 +74,7 @@ program MLP
 
     do e = 1, epochs
 
+        print *, " "
         print *, "=================================================="
         print *, "Epoch ", e, "/", epochs
 
@@ -93,6 +96,7 @@ program MLP
                         X(i,:), weights(l,j,:), n_weights(l), output          &
                     )
                     Y(l,j) = output
+                    Y(l,j+1) = 1.0 ! bias for the next layer
                 end do
             end do
 
@@ -101,20 +105,18 @@ program MLP
             ! Backward pass ---------------------------------------------------
 
             ! Computing the error of the last layer
-            do j = 1, neurons(layers)
-                error(layers,j,:) = a * (Y(layers,j) - T(i,j)) * weights(layers,j,:)
+            do k = 1, neurons(layers)
+                delta(k) = (Y(layers,k) - T(i,k)) * Y(layers,k) * (1.0 - Y(layers,k))
+                weights(layers,k,:) = weights(layers,k,:) - a * delta(k) * Y(layers-1,:)
             end do
 
             ! For each layer
-            do l = layers, 1, -1
-                if (l < layers) then
-                    ! For each neuron in the layer
-                    do j = 1, neurons(l)
-                        ! Compute the error of the neuron
-                        error(l,j,:) = sum(error(l+1,j,:))/n_weights(l+1) * weights(l,j,:)
-                        weights(l,j,:) = weights(l,j,:) - error(l,j,:)
-                    end do
-                end if
+            do l = layers-1, 1, -1
+                ! For each neuron in the layer
+                do j = 1, neurons(layers)
+                    delta(j) = a * Y(l,j) * (1 - Y(l,j)) * sum(delta(:) * weights(l+1,:,j))
+                    weights(l,j,:) = weights(l,j,:) - a * delta(j) * Y(l-1,:)
+                end do
             end do
 
             call print_weights(weights, neurons, n_weights)
@@ -164,8 +166,8 @@ program MLP
             integer :: X_size
             ! write(*,*) "What is the size of the input vector?"
             ! read(*,*) X_size
-            X_size = 8
-            X_size = 2
+            X_size = 8 ! +1 for the bias
+            X_size = 2 ! +1 for the bias
         end function get_input_size
 
         ! Ask the user for the file to read from ------------------------------
@@ -184,11 +186,11 @@ program MLP
             integer :: epochs
             ! write(*,*) "How many epochs should be performed?"
             ! read(*,*) epochs
-            epochs = 3
+            epochs = 10
         end function get_epochs
 
         ! Read the input and output vectors from the file ---------------------
-        subroutine read_data(file, X, T, N, X_size, T_size)
+        subroutine load_data(file, X, T, N, X_size, T_size)
             implicit none
             character(len=1024),  intent(in   ) :: file
             integer,              intent(in   ) :: X_size, T_size
@@ -206,7 +208,7 @@ program MLP
             ! print *, "Number of lines:", nlines
 
             ! Allocate the arrays
-            allocate(X(N, X_size))
+            allocate(X(N, X_size+1))
             allocate(T(N, T_size))
 
             ! Read the file
@@ -214,11 +216,12 @@ program MLP
             do i= 1, N
                 read(42, *) D
                 ! Fill the input and output vectors
-                X(i,:) = D(1:X_size)
+                X(i,1:X_size) = D(1:X_size)
                 T(i,:) = D(X_size+1:X_size+T_size)
             end do
+            X(N, X_size+1) = 1. ! bias
             close(42)
-        end subroutine read_data
+        end subroutine load_data
 
         ! Normalize the input vectors -----------------------------------------
         subroutine normalize_data(X, T, N, X_size, T_size, X_norm, T_norm)
@@ -287,7 +290,8 @@ program MLP
             implicit none
             real, intent(in   ) :: x
             real, intent(  out) :: a
-            a = 1 / (1 + exp(-x)) * 4
+            real                :: beta = 1
+            a = 1 / (1 + exp(beta * x))
         end subroutine activation
 
         ! Compute the output of the neuron -------------------------------------
@@ -305,9 +309,9 @@ program MLP
         ! Print all the weights -----------------------------------------------
         subroutine print_weights(weights, neurons, n_weights)
             implicit none
-            real, intent(in) :: weights(:,:,:)
+            real,    intent(in) :: weights(:,:,:)
             integer, intent(in) :: neurons(:), n_weights(:)
-            integer :: i, j
+            integer             :: i, j
 
             do i = 1, size(neurons)
                 write(*,*) "Layer ", i
@@ -316,5 +320,5 @@ program MLP
                 end do
             end do
         end subroutine print_weights
-        
+
 end program MLP
