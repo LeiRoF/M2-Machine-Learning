@@ -20,7 +20,8 @@ program MLP
     real,    allocatable :: prediction(:)        ! output of the network
     real                 :: output               ! output of a neuron
     real,    allocatable :: X_norm(:), T_norm(:) ! normalization factors
-    real                 :: a=0.1                ! learning rate
+    real                 :: a=1                ! learning rate
+    real                 :: beta=1               ! steepness of the activation function
     integer, allocatable :: neurons(:)           ! number of neurons in each layer
     integer, allocatable :: n_weights(:)         ! number of weights in each layer
     real,    allocatable :: weights(:,:,:)       ! weights of the network
@@ -67,6 +68,7 @@ program MLP
 
     ! Initialize the weights array
     call random_number(weights)
+    weights = 2.0 * weights - 1.0 ! random numbers between -1 and 1
 
     ! Read the input and output vectors from the file
     call load_data(file, X, T, N, X_size, T_size) ! X, T, N <- file
@@ -75,7 +77,7 @@ program MLP
     
     print *, "Possible outputs:"
     do i=1, nb_possible_outputs
-        print *, T_norm * possible_outputs(i,:)
+        print *, i, T_norm * possible_outputs(i,:)
     end do
     print *, "Number of possible outputs:", nb_possible_outputs
 
@@ -118,8 +120,9 @@ program MLP
                 do j = 1, neurons(l)
                     ! Compute the output of the neuron
                     call stimulate_neuron(                                    &
-                        X(i,:), weights(l,j,:), n_weights(l), output          &
+                        X(i,:), weights(l,j,:), n_weights(l), beta, output    &
                     )
+                    print *, "Output of neuron ", j, " in layer ", l, ": ", output
                     Y(l,j) = output
                     Y(l,j+1) = 1.0 ! bias for the next layer
                 end do
@@ -143,15 +146,17 @@ program MLP
 
             ! Computing the error of the last layer
             do k = 1, neurons(layers)
-                delta(k) = (Y(layers,k) - T(i,k)) * Y(layers,k) * (1.0 - Y(layers,k))
+                delta(k) = beta * (Y(layers,k) - T(i,k)) * Y(layers,k) * (1.0 - Y(layers,k))
+                print *, "Delta of neuron ", k, " in layer ", layers, ": ", delta(k)
                 weights(layers,k,:) = weights(layers,k,:) - a * delta(k) * Y(layers-1,:)
             end do
 
             ! For each layer
             do l = layers-1, 1, -1
                 ! For each neuron in the layer
-                do j = 1, neurons(layers)
-                    delta(j) = a * Y(l,j) * (1 - Y(l,j)) * sum(delta(:) * weights(l+1,:,j))
+                do j = 1, neurons(l)
+                    delta(j) = beta * Y(l,j) * (1 - Y(l,j)) * sum(delta(:) * weights(l+1,:,j))
+                    print *, "Delta of neuron ", j, " in layer ", l, ": ", delta(j)
                     weights(l,j,:) = weights(l,j,:) - a * delta(j) * Y(l-1,:)
                 end do
             end do
@@ -203,7 +208,7 @@ program MLP
             !     read(*,*) neurons(i)
             ! end do
             ! neurons = neurons
-            neurons = (/ 3, 1 /)
+            neurons = (/ 2, 1 /)
         end subroutine get_neurons
 
         ! Ask the user for the size of the input vector -----------------------
@@ -232,7 +237,7 @@ program MLP
             integer :: epochs
             ! write(*,*) "How many epochs should be performed?"
             ! read(*,*) epochs
-            epochs = 10
+            epochs = 3
         end function get_epochs
 
         ! Read the input and output vectors from the file ---------------------
@@ -332,24 +337,25 @@ program MLP
         end subroutine weighted_sum
 
         ! Activation function --------------------------------------------------
-        subroutine activation(x, a)
+        subroutine activation(x, beta, a)
             implicit none
             real, intent(in   ) :: x
             real, intent(  out) :: a
-            real                :: beta = 1
-            a = 1 / (1 + exp(beta * x))
+            real                :: beta
+            a = 1 / (1 + exp(-beta * x))
         end subroutine activation
 
         ! Compute the output of the neuron -------------------------------------
-        subroutine stimulate_neuron(X, weights, n_weights, output)
+        subroutine stimulate_neuron(X, weights, n_weights, beta, output)
             implicit none
             real,    intent(in   ) :: X(:)
             real,    intent(in   ) :: weights(:)
             integer, intent(in   ) :: n_weights
+            real,    intent(in   ) :: beta
             real,    intent(  out) :: output
             real :: tmp
             call weighted_sum(X, weights, n_weights, tmp)
-            call activation(tmp, output)
+            call activation(tmp, beta, output)
         end subroutine stimulate_neuron
 
         ! Print all the weights -----------------------------------------------
@@ -359,7 +365,7 @@ program MLP
             integer, intent(in) :: neurons(:), n_weights(:)
             integer             :: i, j
 
-            print *, "Weights:"
+            print *, "New weights:"
             do i = 1, size(neurons)
                 write(*,*) "   Layer ", i
                 do j = 1, neurons(i)
@@ -410,9 +416,10 @@ program MLP
             integer, intent(in) :: nb_possible_outputs
             integer, dimension(nb_possible_outputs) :: outputs
             real,    dimension(nb_possible_outputs) :: recall
-            integer             :: trace = 0
+            integer             :: trace
             integer             :: i
 
+            trace = 0
             recall = 0.0
 
             do i=1,nb_possible_outputs
@@ -423,12 +430,12 @@ program MLP
 
             print *, "Confusion matrix:"
             print *, "               ", outputs, "      garbage       precision"
-            print *, "              --------------------------------------------------- "
+            print *, "              --------------------------------------- "
             do i = 1, nb_possible_outputs
                 print *, outputs(i), " | ", int(confusion_matrix(i, :)), " | ",     &
                     int(confusion_matrix(i,i) / sum(confusion_matrix(i, :)) * 100), "%"
             end do
-            print *, "              --------------------------------------------------- "
+            print *, "              --------------------------------------- "
             print *, "               ", int(recall*100), "%              ",&
                 int(real(trace) / sum(confusion_matrix) * 100.0), "%"
 
@@ -447,7 +454,7 @@ program MLP
             call match_output(output, T_norm, tmp_output)
 
             do i = 1, nb_possible_outputs
-                if (all(output == possible_outputs(i, :))) then
+                if (all(tmp_output == possible_outputs(i, :))) then
                     category = i
                     goto 42
                 end if
