@@ -130,9 +130,9 @@ program MLP
             ! Compute the coordinates of the the prediction in the confusion matrix
             if (discret_outputs) then
                 call get_output_category(&
-                    prediction, possible_outputs, nb_possible_outputs, output_category)
+                    prediction, possible_outputs, nb_possible_outputs, T_norm, output_category)
                 call get_output_category(&
-                    T(i,:), possible_outputs, nb_possible_outputs, expected_category)
+                    T(i,:), possible_outputs, nb_possible_outputs, T_norm, expected_category)
 
                 ! Update the confusion matrix
                 confusion(expected_category, output_category) = &
@@ -157,6 +157,11 @@ program MLP
             end do
 
             print *, "Preditction:"
+            
+            if (discret_outputs) then
+                call match_output(prediction, T_norm, prediction)
+            end if
+
             print *, X_norm * X(i,:), "|", T_norm * T(i,:), " -> ", T_norm * prediction
 
             call print_confusion_matrix(confusion, nb_possible_outputs)
@@ -260,7 +265,7 @@ program MLP
                 X(i,1:X_size) = D(1:X_size)
                 T(i,:) = D(X_size+1:X_size+T_size)
             end do
-            X(N, X_size+1) = 1. ! bias
+            X(:, X_size+1) = 1. ! bias
             close(42)
         end subroutine load_data
 
@@ -430,12 +435,16 @@ program MLP
         end subroutine print_confusion_matrix
 
         ! Get the output category ---------------------------------------------
-        subroutine get_output_category(output, possible_outputs, nb_possible_outputs, category)
+        subroutine get_output_category(output, possible_outputs, nb_possible_outputs, T_norm, category)
             implicit none
             real,    intent(in   ) :: output(:)
             real,    intent(in   ) :: possible_outputs(:,:)
+            real,    intent(in   ) :: T_norm(:)
             integer, intent(in   ) :: nb_possible_outputs
+            real,    dimension(size(output)) :: tmp_output
             integer                :: i, category
+
+            call match_output(output, T_norm, tmp_output)
 
             do i = 1, nb_possible_outputs
                 if (all(output == possible_outputs(i, :))) then
@@ -446,5 +455,21 @@ program MLP
             category = nb_possible_outputs + 1
             42 category = category
         end subroutine get_output_category
+
+        ! Match the output with the possible outputs --------------------------
+        subroutine match_output(output, T_norm, tmp_output)
+            implicit none
+            real,    intent(in   ) :: output(:)
+            real,    intent(in   ) :: T_norm(:)
+            real,    intent(  out) :: tmp_output(:)
+            integer                :: i
+
+            tmp_output = output * T_norm
+            do i=1,size(output)
+                tmp_output(i) = nint(tmp_output(i))
+            end do
+            tmp_output = tmp_output / T_norm
+
+        end subroutine match_output
 
 end program MLP
