@@ -20,8 +20,8 @@ program MLP
     real,    allocatable :: prediction(:)        ! output of the network
     real                 :: output               ! output of a neuron
     real,    allocatable :: X_norm(:), T_norm(:) ! normalization factors
-    real                 :: a=1                ! learning rate
-    real                 :: beta=1               ! steepness of the activation function
+    real                 :: a=0.1                ! learning rate
+    real                 :: beta=0.1               ! steepness of the activation function
     integer, allocatable :: neurons(:)           ! number of neurons in each layer
     integer, allocatable :: n_weights(:)         ! number of weights in each layer
     real,    allocatable :: weights(:,:,:)       ! weights of the network
@@ -146,7 +146,7 @@ program MLP
 
             ! Computing the error of the last layer
             do k = 1, neurons(layers)
-                delta(k) = beta * (Y(layers,k) - T(i,k)) * Y(layers,k) * (1.0 - Y(layers,k))
+                delta(k) = beta * (Y(layers,k) - T(i,k)) !* Y(layers,k) * (1.0 - Y(layers,k))
                 print *, "Delta of neuron ", k, " in layer ", layers, ": ", delta(k)
                 weights(layers,k,:) = weights(layers,k,:) - a * delta(k) * Y(layers-1,:)
             end do
@@ -155,7 +155,7 @@ program MLP
             do l = layers-1, 1, -1
                 ! For each neuron in the layer
                 do j = 1, neurons(l)
-                    delta(j) = beta * Y(l,j) * (1 - Y(l,j)) * sum(delta(:) * weights(l+1,:,j))
+                    delta(j) = beta * sum(delta(:) * weights(l+1,:,j)) ! * Y(l,j) * (1 - Y(l,j))
                     print *, "Delta of neuron ", j, " in layer ", l, ": ", delta(j)
                     weights(l,j,:) = weights(l,j,:) - a * delta(j) * Y(l-1,:)
                 end do
@@ -194,6 +194,7 @@ program MLP
             integer :: layers
             ! write(*,*) "How many layers should the network have?"
             ! read(*,*) layers
+            layers = 3
             layers = 2
         end function get_layers
 
@@ -208,6 +209,7 @@ program MLP
             !     read(*,*) neurons(i)
             ! end do
             ! neurons = neurons
+            neurons = (/ 4, 3, 1 /)
             neurons = (/ 2, 1 /)
         end subroutine get_neurons
 
@@ -217,8 +219,8 @@ program MLP
             integer :: X_size
             ! write(*,*) "What is the size of the input vector?"
             ! read(*,*) X_size
-            X_size = 8 ! +1 for the bias
-            X_size = 2 ! +1 for the bias
+            X_size = 4
+            X_size = 2
         end function get_input_size
 
         ! Ask the user for the file to read from ------------------------------
@@ -227,7 +229,7 @@ program MLP
             character(len=1024), intent(inout) :: file
             ! write(*,*) "What file should be read from?"
             ! read(*,*) file
-            file = "pima_data.txt"
+            file = "iris.txt"
             file = "test.txt"
         end subroutine get_file
 
@@ -282,7 +284,7 @@ program MLP
             integer :: i
             real, intent(out) :: X_norm(:), T_norm(:)
 
-            do i=1,X_size
+            do i=1,X_size+1
                 X_norm(i) = maxval(X(:,i))
             end do
 
@@ -343,6 +345,7 @@ program MLP
             real, intent(  out) :: a
             real                :: beta
             a = 1 / (1 + exp(-beta * x))
+            a = beta * x
         end subroutine activation
 
         ! Compute the output of the neuron -------------------------------------
@@ -354,8 +357,12 @@ program MLP
             real,    intent(in   ) :: beta
             real,    intent(  out) :: output
             real :: tmp
+            print *, "X:", X
+            print *, "weights:", weights
             call weighted_sum(X, weights, n_weights, tmp)
+            print *, "tmp:", tmp    
             call activation(tmp, beta, output)
+            print *, "output:", output
         end subroutine stimulate_neuron
 
         ! Print all the weights -----------------------------------------------
